@@ -2,9 +2,9 @@
 name = "trdc"
 version = "0.0.1"
 edition = "2024"
-authors = ["Pixma, pixma@pixma.fr"]
+authors = ["pixmants <maxime@maxime-pointet.fr>"]
 description = "Token Reducer CLI - LLM-first context-aware command output summarization"
-license = "MIT"
+license = "MIT OR Apache-2.0"
 readme = "README.md"
 
 [dependencies]
@@ -12,8 +12,8 @@ clap = { version = "4", features = ["derive"] }
 anyhow = "1.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1" }
-dirs = "6.0.0"
-toml = "1.1.2"
+dirs = "6.0"
+toml = "1"
 chrono = "0.4"
 ureq = { version = "3.3.0", features = ["json"] }
 
