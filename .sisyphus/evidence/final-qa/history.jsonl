@@ -1,0 +1,3 @@
+{"timestamp":"2026-04-03T22:39:21.894090686+02:00","command":"sh -c printf \"\\033[31mRED\\033[0m\\n\"; printf \"\\033[32mGREEN\\033[0m\\n\"","summary":"The given output chunk consists of two colors: red and green."}
+{"timestamp":"2026-04-03T22:39:23.309801237+02:00","command":"sh -c for i in $(seq 1 10); do echo \"duplicate line\"; done; echo \"final line\"","summary":"The given output chunk consists of 9 identical lines, which have been collapsed into a single line. This indicates that the output has been reduced to a single line of text, likely due to formatting or truncation."}
+{"timestamp":"2026-04-03T22:39:37.011208142+02:00","command":"<stdin>","summary":"The given output chunk is a single line consisting of a single word: \"Hello\"."}

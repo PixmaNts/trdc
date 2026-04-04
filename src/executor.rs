@@ -3,7 +3,7 @@
 use anyhow::{Context, Result};
 use std::process::Command;
 
-pub fn execute(command: &str, args: &[String]) -> Result<String> {
+pub fn execute(command: &str, args: &[String]) -> Result<(String, Option<i32>)> {
     let output = Command::new(command)
         .args(args)
         .output()
@@ -20,12 +20,14 @@ pub fn execute(command: &str, args: &[String]) -> Result<String> {
         format!("{stdout}\n{stderr}")
     };
 
+    let exit_code = output.status.code();
+
     if !output.status.success() && !combined.is_empty() {
-        let code = output.status.code().unwrap_or(1);
+        let code = exit_code.unwrap_or(1);
         eprintln!("[trdc] Command exited with code {code}");
     }
 
-    Ok(combined)
+    Ok((combined, exit_code))
 }
 
 #[cfg(test)]
@@ -36,7 +38,8 @@ mod tests {
     fn test_execute_echo() {
         let result = execute("echo", &["hello".to_string(), "world".to_string()]);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap().trim(), "hello world");
+        let (output, _exit_code) = result.unwrap();
+        assert_eq!(output.trim(), "hello world");
     }
 
     #[test]

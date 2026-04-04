@@ -5,7 +5,7 @@
 
 ## OVERVIEW
 
-Rust CLI (edition 2024) that runs commands, sends output to a local LLM (OpenAI-compatible API), and prints semantic summaries. Tracks token savings across sessions.
+Rust CLI (edition 2024) that runs commands, sends output to a local LLM (OpenAI-compatible API), and prints semantic summaries. Tracks token savings across sessions. Supports streaming output, exit code propagation, pre-filtering, stdin input, and command history.
 
 ## STRUCTURE
 
@@ -16,8 +16,10 @@ trdc/
 │   ├── cli.rs        # Clap derive CLI arg parsing
 │   ├── config.rs     # TOML config + env var overrides
 │   ├── executor.rs   # Subprocess execution (stdout+stderr capture)
-│   ├── llm.rs        # LLM client, chunked processing, output file persistence
-│   └── tracking.rs   # Token usage tracking, session stats, --gain display
+│   ├── llm.rs        # LLM client, chunked processing, streaming, output file persistence
+│   ├── tracking.rs   # Token usage tracking, session stats, --gain display
+│   ├── filter.rs     # Output pre-filtering (ANSI strip, duplicate collapse, whitespace trim)
+│   └── history.rs    # Command history tracking and display
 ├── Cargo.toml        # Single binary crate, aggressive release profile
 └── README.md
 ```
@@ -33,6 +35,8 @@ trdc/
 | Token tracking/stats | `src/tracking.rs` | `SessionStats`, `display_gain()`, `estimate_tokens()` |
 | Pipeline flow | `src/main.rs` | `run()` — the main orchestrator |
 | Chunking logic | `src/llm.rs` | `chunk_output()`, constants `CHUNK_SIZE=2000`, `MAX_CHUNKS=100` |
+| Output pre-filtering | `src/filter.rs` | `pre_filter()`, `strip_ansi()`, `collapse_duplicates()`, `trim_whitespace()` |
+| Command history | `src/history.rs` | `HistoryEntry`, `append()`, `load()`, `display_history()` |
 
 ## CODE MAP
 
@@ -52,6 +56,14 @@ trdc/
 | `estimate_tokens()` | fn | `tracking.rs` | Heuristic: `ceil(chars / 4)` |
 | `build_output()` | fn | `llm.rs` | Formats final "Summary:\n...\nFull output saved to: ..." |
 | `run()` | fn | `main.rs` | Main pipeline: parse CLI → load config → execute → summarize → track |
+| `pre_filter()` | fn | `filter.rs` | Chains all filters: strip_ansi → collapse_duplicates → trim_whitespace |
+| `strip_ansi()` | fn | `filter.rs` | Removes ANSI escape sequences (CSI and OSC) |
+| `collapse_duplicates()` | fn | `filter.rs` | Collapses 5+ identical consecutive lines |
+| `trim_whitespace()` | fn | `filter.rs` | Trims trailing whitespace and leading/trailing blank lines |
+| `HistoryEntry` | struct | `history.rs` | Command history entry with timestamp, command, summary |
+| `append()` | fn | `history.rs` | Appends entry to history file |
+| `load()` | fn | `history.rs` | Loads history entries with optional limit |
+| `display_history()` | fn | `history.rs` | Displays history in compact or full mode |
 
 ## CONVENTIONS
 
@@ -61,7 +73,7 @@ trdc/
 - **Tests**: Inline `#[cfg(test)] mod tests` in each source file. No separate `tests/` directory. Factory helpers named `test_config()` etc.
 - **Serde defaults**: All config fields use `#[serde(default = "...")]` with standalone default functions that check env vars.
 - **Clap**: `trailing_var_arg = true` + `allow_hyphen_values = true` on root command (needed to pass arbitrary flags through to subprocess).
-- **HTTP**: Uses `ureq` (blocking), not `reqwest`. Synchronous by design.
+- **HTTP**: Uses `reqwest` with `tokio` for async streaming. Previously used `ureq` (blocking).
 - **Float comparisons**: Tests use epsilon pattern `(actual - expected).abs() < 0.01`.
 
 ## ANTI-PATTERNS
@@ -76,7 +88,7 @@ trdc/
 ```bash
 cargo build                  # Debug build
 cargo build --release        # Release (LTO, stripped, single codegen unit)
-cargo test                   # Run 17 inline unit tests
+cargo test                   # Run inline unit tests
 cargo run -- <cmd> [args...] # Run trdc
 cargo clippy                 # Lint (no custom config)
 cargo fmt --check            # Format check (no custom config)
@@ -85,6 +97,10 @@ cargo fmt --check            # Format check (no custom config)
 ## NOTES
 
 - Requires a running LLM server (default: LM Studio at `localhost:1234`). Tests do NOT require the server — only pure logic is tested.
-- Config: `~/.config/trdc/config.toml` · Stats: `~/.local/share/trdc/stats.json` · Temp output: `/tmp/trdc/`.
+- Config: `~/.config/trdc/config.toml` · Stats: `~/.local/share/trdc/stats.json` · History: `~/.local/share/trdc/history.jsonl` · Temp output: `/tmp/trdc/`.
 - Env overrides: `TRDC_LLM_ENDPOINT`, `TRDC_LLM_MODEL`, `TRDC_MAX_TOKENS`, `TRDC_TIMEOUT`.
 - Release binary is aggressively optimized: `lto=true`, `codegen-units=1`, `panic="abort"`, `strip=true`.
+- New dependencies: `reqwest` (async HTTP), `tokio` (async runtime), `regex` (ANSI stripping), `is-terminal` (stdin detection).
+- Stdin support: When no command is provided, reads from stdin (max 10MB). Command recorded as `<stdin>` in history.
+- Streaming: LLM responses are streamed in real-time for immediate feedback.
+- Exit codes: Subprocess exit codes are propagated through to the caller.

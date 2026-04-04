@@ -20,11 +20,19 @@ pub struct Cli {
     pub verbose: bool,
 
     /// Show token savings summary (like rtk gain)
-    #[arg(short = 'g', long = "gain")]
+    #[arg(long = "gain")]
     pub show_gain: bool,
 
+    /// Show command history
+    #[arg(short = 'H', long = "history")]
+    pub show_history: bool,
+
+    /// Show full history entries (used with --history)
+    #[arg(long)]
+    pub full: bool,
+
     /// Custom context/instructions for summarization
-    #[arg(long, short = 'c')]
+    #[arg(long = "context")]
     pub context: Option<String>,
 
     /// LLM model to use (overrides config)
@@ -35,8 +43,8 @@ pub struct Cli {
     #[arg(long)]
     pub max_tokens: Option<usize>,
 
-    /// Command to execute (required)
-    pub command: String,
+    /// Command to execute (optional if stdin is piped)
+    pub command: Option<String>,
 
     /// Arguments for the command (use -- to separate trdc args)
     pub args: Vec<String>,
@@ -49,7 +57,7 @@ mod tests {
     #[test]
     fn test_parse_basic() {
         let cli = Cli::parse_from(["trdc", "echo", "hello"]);
-        assert_eq!(cli.command, "echo");
+        assert_eq!(cli.command, Some("echo".to_string()));
         assert_eq!(cli.args, vec!["hello"]);
         assert!(!cli.dry_run);
         assert!(!cli.verbose);
@@ -58,8 +66,8 @@ mod tests {
 
     #[test]
     fn test_parse_with_context() {
-        let cli = Cli::parse_from(["trdc", "-c", "Focus on failures", "cargo", "test"]);
-        assert_eq!(cli.command, "cargo");
+        let cli = Cli::parse_from(["trdc", "--context", "Focus on failures", "cargo", "test"]);
+        assert_eq!(cli.command, Some("cargo".to_string()));
         assert_eq!(cli.args, vec!["test"]);
         assert_eq!(cli.context, Some("Focus on failures".to_string()));
     }
@@ -67,20 +75,29 @@ mod tests {
     #[test]
     fn test_parse_with_ls_flags() {
         let cli = Cli::parse_from(["trdc", "ls", "-lhr"]);
-        assert_eq!(cli.command, "ls");
+        assert_eq!(cli.command, Some("ls".to_string()));
         assert_eq!(cli.args, vec!["-lhr"]);
     }
 
     #[test]
     fn test_parse_with_separator() {
         let cli = Cli::parse_from(["trdc", "--", "ls", "-la"]);
-        assert_eq!(cli.command, "ls");
+        assert_eq!(cli.command, Some("ls".to_string()));
         assert_eq!(cli.args, vec!["-la"]);
     }
 
     #[test]
     fn test_parse_with_gain_flag() {
-        let cli = Cli::parse_from(["trdc", "-g", "echo", "test"]);
+        let cli = Cli::parse_from(["trdc", "--gain", "echo", "test"]);
         assert!(cli.show_gain);
+        assert_eq!(cli.command, Some("echo".to_string()));
+        assert_eq!(cli.args, vec!["test"]);
+    }
+
+    #[test]
+    fn test_parse_no_command() {
+        let cli = Cli::parse_from(["trdc"]);
+        assert!(cli.command.is_none());
+        assert!(cli.args.is_empty());
     }
 }

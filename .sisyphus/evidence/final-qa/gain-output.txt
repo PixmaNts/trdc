@@ -1,0 +1,20 @@
+[trdc] Summarizing...
+[trdc] Processing 1 chunks...
+Summary:
+[trdc] LLM response in 576ms
+This single chunk is a standard string "Hello World", often used as a greeting.
+Full output saved to: /tmp/trdc/trdc_output_stdin_20260403_224038.txt
+
+╔══════════════════════════════════════════════════════════╗
+║              TRDC Token Savings Summary                  ║
+╠══════════════════════════════════════════════════════════╣
+║  Current Command:                                        ║
+║    Input (to LLM):           3 tokens                    ║
+║    Output (from LLM):       20 tokens                    ║
+║    Saved:                    0 tokens (  0.0%)          ║
+╠══════════════════════════════════════════════════════════╣
+║  Session Total:                                          ║
+║    Input (to LLM):        4838 tokens                    ║
+║    Output (from LLM):     2478 tokens                    ║
+║    Saved:                 2360 tokens ( 48.8%)          ║
+║    Commands:                24                          ║

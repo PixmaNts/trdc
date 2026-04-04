@@ -1,0 +1,42 @@
+{
+  "active_plan": "/home/pixma/dev/trdc/.sisyphus/plans/trdc-v2.md",
+  "started_at": "2026-04-03T17:51:08.324Z",
+  "session_ids": [
+    "ses_2ab879fe4ffe2WCyODW0GvopSA",
+    "ses_2ab8602e8ffelXciXcjC9Lp61e",
+    "ses_2ab4148d6ffe5lbNArRtQfZRZX",
+    "ses_2aafaba58ffe6FIwKq7c2y2yy0",
+    "ses_2aaf9ca6cffedUdji1kiAoSMnM",
+    "ses_2aaf9e5dbffeYfuCzj3j2STs3E",
+    "ses_2aafa025dffe2IW1reZQXE4uQ1",
+    "ses_2aaf9adecffeJ9xevR8grj0XIZ",
+    "ses_2aaf560f0ffeA6rS6Qn4Fz9XDV",
+    "ses_2aaf1e2dcffeIvklx5yv4ZMVCK",
+    "ses_2aaef7b5effedjeIPegq3uEv3D",
+    "ses_2aaef85f3ffeg503eUJVUsmVgP",
+    "ses_2aaef63beffeAX7XLq4w0OgZtY",
+    "ses_2aaef6d77ffe9450XBb0fNxsiG"
+  ],
+  "plan_name": "trdc-v2",
+  "agent": "atlas",
+  "task_sessions": {
+    "todo:1": {
+      "task_key": "todo:1",
+      "task_label": "1",
+      "task_title": "**Async Migration Foundation**",
+      "session_id": "ses_2ab8602e8ffelXciXcjC9Lp61e",
+      "agent": "Sisyphus-Junior",
+      "category": "deep",
+      "updated_at": "2026-04-03T18:00:38.058Z"
+    },
+    "todo:2": {
+      "task_key": "todo:2",
+      "task_label": "2",
+      "task_title": "**Streaming LLM Output**",
+      "session_id": "ses_2aaef85f3ffeg503eUJVUsmVgP",
+      "agent": "Sisyphus-Junior",
+      "category": "unspecified-high",
+      "updated_at": "2026-04-03T20:39:11.077Z"
+    }
+  }
+}
