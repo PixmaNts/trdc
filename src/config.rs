@@ -70,7 +70,10 @@ fn default_max_tokens() -> usize {
 }
 
 fn default_max_input_chars() -> usize {
-    4000
+    std::env::var("TRDC_MAX_INPUT_CHARS")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(16000)
 }
 
 fn default_temperature() -> f32 {

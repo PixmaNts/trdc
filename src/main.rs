@@ -15,7 +15,7 @@ use clap::Parser;
 use cli::Cli;
 use config::Config;
 use history::{display_history, load};
-use std::io::{IsTerminal, Read, Write};
+use std::io::{IsTerminal, Read};
 use tracking::{SessionStats, TokenUsage, display_gain, estimate_tokens};
 
 #[tokio::main]
@@ -103,9 +103,6 @@ async fn run() -> Result<i32> {
         eprintln!("[trdc] Input mode: {user_cmd}");
     }
 
-    eprint!("[trdc] ");
-    std::io::stderr().flush()?;
-
     let (output, _exit_code) = if let Some(ref cmd) = cli.command {
         let command = cmd.clone();
         let args = cli.args.clone();
@@ -131,18 +128,18 @@ async fn run() -> Result<i32> {
     let user_context = cli.context.as_deref();
 
     if cli.dry_run {
-        let chunks = llm::chunk_output(&filtered_output);
+        let output_len = filtered_output.chars().count();
+        let limit = config.llm.max_input_chars;
+        let would_truncate = output_len > limit;
         eprintln!(
-            "\n[trdc] Dry run - would process {} chunks ({} chars total)\n",
-            chunks.len(),
-            filtered_output.len()
+            "\n[trdc] Dry run - {} chars (limit: {} chars, would{} truncate)\n",
+            output_len,
+            limit,
+            if would_truncate { "" } else { " not" }
         );
         eprintln!("[trdc] Full output would be saved to: ~/.local/share/trdc/outputs/");
         return Ok(_exit_code.unwrap_or(0));
     }
-
-    eprintln!("Summarizing...");
-    std::io::stderr().flush()?;
 
     let mut stats = SessionStats::load().unwrap_or_default();
     let input_tokens = estimate_tokens(&filtered_output);

@@ -1,18 +1,15 @@
 //! LLM client for TRDC
 //!
 //! Handles communication with local LLM (LM Studio) for semantic summarization.
-//! Processes large outputs in chunks to avoid memory issues.
+//! Uses single-request summarization with smart truncation for large outputs.
 
 use crate::config::LlmConfig;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
-use std::io::Write;
+use std::io::{IsTerminal, Write};
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
-
-const CHUNK_SIZE: usize = 2000;
-const MAX_CHUNKS: usize = 100;
+use std::time::Duration;
 
 #[derive(Debug, Serialize)]
 struct ChatRequest<'a> {
@@ -72,6 +69,7 @@ struct Delta {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct LlmResult {
     pub content: String,
     pub usage: Option<Usage>,
@@ -90,6 +88,56 @@ pub struct TokenUsage {
     pub input_tokens: usize,
     #[allow(dead_code)]
     pub output_tokens: usize,
+}
+
+/// Smart truncation that keeps head + tail of output when it exceeds max_chars.
+/// Uses 20% for head, 80% for tail to preserve error messages at the end.
+fn smart_truncate(input: &str, max_chars: usize) -> String {
+    let input_len = input.chars().count();
+    if input_len <= max_chars {
+        return input.to_string();
+    }
+
+    let head_chars = (max_chars * 20) / 100; // 20% for head
+    let tail_chars = max_chars - head_chars; // 80% for tail
+
+    let chars: Vec<char> = input.chars().collect();
+    let tail_start = input_len.saturating_sub(tail_chars);
+
+    let head: String = chars[..head_chars].iter().collect();
+    let tail: String = chars[tail_start..].iter().collect();
+
+    // Count newlines between head and tail in the ORIGINAL string
+    // This correctly handles cases where head/tail split lines
+    let removed_lines = if head_chars < tail_start {
+        chars[head_chars..tail_start].iter().filter(|&&c| c == '\n').count()
+    } else {
+        0
+    };
+
+    if removed_lines > 0 {
+        format!("{}\n\n[... {} lines truncated ...]\n\n{}", head, removed_lines, tail)
+    } else {
+        format!("{}{}", head, tail)
+    }
+}
+
+/// Builds a single prompt for the LLM with the (potentially truncated) output.
+fn build_single_prompt(output: &str, user_cmd: &str, context: Option<&str>) -> String {
+    let context_part = match context {
+        Some(ctx) if !ctx.is_empty() => format!("Context: {}\n", ctx),
+        _ => String::new(),
+    };
+
+    format!(
+        r"Analyze the output of this command: {}
+
+{context_part}OUTPUT:
+{}
+
+Provide a concise summary in plain text.",
+        user_cmd, output
+    )
 }
 
 pub async fn summarize(
@@ -114,70 +162,48 @@ pub async fn summarize(
 
     let output_path = write_output_to_file(output, user_cmd)?;
 
-    let chunks = chunk_output(output);
-    let total = chunks.len();
+    // Apply smart truncation if output exceeds max_input_chars
+    let truncated_output = smart_truncate(output, config.max_input_chars);
+    let was_truncated = truncated_output != output;
 
-    eprintln!("[trdc] Processing {total} chunks...");
-
-    let mut accumulated_summary = String::new();
-    let mut total_input_tokens = 0usize;
-    let mut total_output_tokens = 0usize;
-
-    for (i, chunk) in chunks.iter().enumerate() {
-        let chunk_num = i + 1;
-        let is_last_chunk = chunk_num == total;
-        let prompt = build_summarize_prompt(chunk_num, total, chunk, user_context);
-
-        if is_last_chunk {
-            // Final chunk: stream to stdout
-            println!("Summary:");
-            std::io::stdout().flush().ok();
-
-            let streamed_content = call_llm_streaming(&prompt, config, |token| {
-                print!("{token}");
-                std::io::stdout().flush().ok();
-            })
-            .await?;
-
-            let clean_response = streamed_content.trim().to_string();
-            let response_chars = clean_response.chars().count();
-            if accumulated_summary.is_empty() {
-                accumulated_summary = clean_response;
-            } else {
-                accumulated_summary = format!("{accumulated_summary}\n\n{clean_response}");
-            }
-            // For streaming, we don't get usage info
-            // Estimate based on chars/4
-            total_output_tokens += response_chars.div_ceil(4);
-            total_input_tokens += prompt.chars().count().div_ceil(4);
-        } else {
-            // Intermediate chunks: silent processing
-            let result = call_llm(&prompt, config).await?;
-
-            if let Some(ref usage) = result.usage {
-                total_input_tokens += usage.prompt_tokens;
-                total_output_tokens += usage.completion_tokens;
-            }
-
-            let response = result.content;
-            let clean_response = response.trim().to_string();
-
-            if accumulated_summary.is_empty() {
-                accumulated_summary = clean_response;
-            } else {
-                accumulated_summary = format!("{accumulated_summary}\n\n{clean_response}");
-            }
-        }
+    if was_truncated && std::io::stderr().is_terminal() {
+        eprintln!(
+            "[trdc] Output truncated from {} to {} chars",
+            output.chars().count(),
+            truncated_output.chars().count()
+        );
     }
+
+    let prompt = build_single_prompt(&truncated_output, user_cmd, user_context);
+
+    println!("Summary:");
+    std::io::stdout().flush().ok();
+
+    let streamed_content = call_llm_streaming(&prompt, config, |token| {
+        print!("{token}");
+        std::io::stdout().flush().ok();
+    })
+    .await?;
+
+    if !streamed_content.ends_with('\n') {
+        println!();
+    }
+
+    let clean_response = streamed_content.trim().to_string();
+    let response_chars = clean_response.chars().count();
+
+    // For streaming, we don't get usage info - estimate based on chars/4
+    let output_tokens = response_chars.div_ceil(4);
+    let input_tokens = prompt.chars().count().div_ceil(4);
 
     Ok((
         OutputJson {
-            summary: accumulated_summary,
+            summary: clean_response,
             complete_output_path: output_path.to_string_lossy().to_string(),
         },
         TokenUsage {
-            input_tokens: total_input_tokens,
-            output_tokens: total_output_tokens,
+            input_tokens,
+            output_tokens,
         },
         true, // streaming happened
     ))
@@ -205,39 +231,7 @@ pub fn write_output_to_file(output: &str, user_cmd: &str) -> Result<PathBuf> {
     Ok(path)
 }
 
-pub fn chunk_output(output: &str) -> Vec<String> {
-    let mut chunks = Vec::new();
-    let bytes = output.as_bytes();
-
-    if bytes.len() <= CHUNK_SIZE {
-        return vec![output.to_string()];
-    }
-
-    let mut start = 0;
-    while start < bytes.len() && chunks.len() < MAX_CHUNKS {
-        let end = std::cmp::min(start + CHUNK_SIZE, bytes.len());
-
-        if end < bytes.len() {
-            if let Some(nl) = bytes[start..end].iter().rposition(|&b| b == b'\n') {
-                chunks.push(String::from_utf8_lossy(&bytes[start..start + nl]).to_string());
-                start += nl + 1;
-            } else {
-                chunks.push(String::from_utf8_lossy(&bytes[start..end]).to_string());
-                start = end;
-            }
-        } else {
-            chunks.push(String::from_utf8_lossy(&bytes[start..end]).to_string());
-            break;
-        }
-    }
-
-    if start < bytes.len() && chunks.len() == MAX_CHUNKS {
-        chunks.push(String::from_utf8_lossy(&bytes[start..]).to_string());
-    }
-
-    chunks
-}
-
+#[allow(dead_code)]
 async fn call_llm(prompt: &str, config: &LlmConfig) -> Result<LlmResult> {
     let request = ChatRequest {
         model: &config.model_name,
@@ -257,7 +251,6 @@ async fn call_llm(prompt: &str, config: &LlmConfig) -> Result<LlmResult> {
     };
 
     let timeout = Duration::from_secs(config.timeout_secs);
-    let start = Instant::now();
 
     let client = reqwest::Client::builder()
         .timeout(timeout)
@@ -282,14 +275,10 @@ async fn call_llm(prompt: &str, config: &LlmConfig) -> Result<LlmResult> {
             }
         })?;
 
-    let elapsed = start.elapsed().as_millis();
-
     let chat_resp: ChatResponse = response
         .json()
         .await
         .context("Failed to parse LLM response")?;
-
-    eprintln!("[trdc] LLM response in {elapsed}ms");
 
     let content = chat_resp
         .choices
@@ -329,7 +318,6 @@ async fn call_llm_streaming(
     };
 
     let timeout = Duration::from_secs(config.timeout_secs);
-    let start = Instant::now();
 
     let client = reqwest::Client::builder()
         .timeout(timeout)
@@ -353,9 +341,6 @@ async fn call_llm_streaming(
                 anyhow::anyhow!("LLM request failed: {e}")
             }
         })?;
-
-    let elapsed = start.elapsed().as_millis();
-    eprintln!("[trdc] LLM response in {elapsed}ms");
 
     // Use bytes_stream() to get async stream of bytes
     let mut stream = response.bytes_stream();
@@ -417,30 +402,6 @@ async fn call_llm_streaming(
     Ok(full_response)
 }
 
-#[allow(dead_code)]
-fn build_json_input(user_cmd: &str, output: &str, context: Option<&str>) -> String {
-    let escaped_output = output
-        .replace('\\', "\\\\")
-        .replace('"', "\\\"")
-        .replace('\n', "\\n")
-        .replace('\r', "\\r")
-        .replace('\t', "\\t");
-
-    let escaped_cmd = user_cmd.replace('\\', "\\\\").replace('"', "\\\"");
-
-    let escaped_context = context
-        .map(|c| c.replace('\\', "\\\\").replace('"', "\\\""))
-        .unwrap_or_default();
-
-    format!(
-        r#"{{
-  "user_cmd": "{escaped_cmd}",
-  "cmd_output": "{escaped_output}",
-  "context_provided": "{escaped_context}"
-}}"#
-    )
-}
-
 pub fn build_output(summary: &str, output_path: &str, skip_summary: bool) -> String {
     if skip_summary {
         format!("\nFull output saved to: {output_path}")
@@ -449,82 +410,61 @@ pub fn build_output(summary: &str, output_path: &str, skip_summary: bool) -> Str
     }
 }
 
-fn build_summarize_prompt(
-    chunk_num: usize,
-    total_chunks: usize,
-    chunk: &str,
-    context: Option<&str>,
-) -> String {
-    let context_part = match context {
-        Some(ctx) if !ctx.is_empty() => format!("Context: {ctx}\n"),
-        _ => String::new(),
-    };
-
-    if chunk_num == 1 {
-        format!(
-            r"Analyze this output chunk 1/{total_chunks} and provide a brief summary.
-{context_part}
-CHUNK:
-{chunk}
-
-Provide a concise summary in plain text (not JSON)."
-        )
-    } else {
-        format!(
-            r"Continue analysis of output chunk {chunk_num}/{total_chunks}:
-{context_part}
-CHUNK:
-{chunk}
-
-Append to previous summary. Output plain text summary."
-        )
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    fn test_config() -> LlmConfig {
-        LlmConfig {
-            endpoint_url: "http://localhost:1234/v1/chat/completions".to_string(),
-            model_name: "local-model".to_string(),
-            timeout_secs: 5,
-            max_output_tokens: 200,
-            max_input_chars: 4000,
-            temperature: 0.7,
-        }
+    #[test]
+    fn test_smart_truncate_fits() {
+        let input = "short output";
+        let result = smart_truncate(input, 100);
+        assert_eq!(result, "short output");
     }
 
     #[test]
-    fn test_build_json_input() {
-        let input = build_json_input("echo hello", "hello world", Some("test context"));
-        assert!(input.contains("echo hello"));
-        assert!(input.contains("hello world"));
-        assert!(input.contains("test context"));
+    fn test_smart_truncate_truncates() {
+        let input = "line1\nline2\nline3\nline4\nline5\nline6\nline7\nline8\nline9\nline10";
+        let result = smart_truncate(input, 30);
+        assert!(result.contains("line1"));
+        assert!(result.contains("line10"));
+        // With head_chars=6 (20% of 30), tail_chars=24 (80% of 30)
+        // removed_lines = 5 (lines 2-6)
+        assert!(result.contains("[... 5 lines truncated ...]"));
     }
 
     #[test]
-    fn test_build_json_input_no_context() {
-        let input = build_json_input("echo hello", "hello world", None);
-        assert!(input.contains("echo hello"));
-        assert!(input.contains("\"\""));
+    fn test_smart_truncate_preserves_head_tail() {
+        // With max_chars=25: head_chars=5, tail_chars=20
+        // Head gets first 5 chars "aaaaa", tail gets last 20 chars
+        let input = "aaaaa\nbbbbbbbbbb\ncccccccccc\ndddddddddd\neeeeeeeeee\nffffffffff";
+        let result = smart_truncate(input, 25);
+        // Head should be first 5 chars (20% of 25)
+        assert!(result.contains("aaaaa"));
+        // Tail should contain end of input
+        assert!(result.contains("ffffffffff"));
+        // Should have truncation marker (4 lines removed: bb, cc, dd, ee lines)
+        assert!(result.contains("[... 4 lines truncated ...]"));
     }
 
     #[test]
-    fn test_chunk_output_small() {
-        let output = "short output";
-        let chunks = chunk_output(output);
-        assert_eq!(chunks.len(), 1);
-        assert_eq!(chunks[0], "short output");
+    fn test_build_single_prompt() {
+        let output = "test output";
+        let user_cmd = "echo hello";
+        let result = build_single_prompt(output, user_cmd, None);
+        assert!(result.contains("echo hello"));
+        assert!(result.contains("test output"));
+        assert!(result.contains("OUTPUT:"));
     }
 
     #[test]
-    fn test_chunk_output_large() {
-        let output = "x".repeat(5000);
-        let chunks = chunk_output(&output);
-        assert!(chunks.len() > 1);
-        assert!(chunks.len() <= 3);
+    fn test_build_single_prompt_with_context() {
+        let output = "test output";
+        let user_cmd = "echo hello";
+        let context = "focus on errors";
+        let result = build_single_prompt(output, user_cmd, Some(context));
+        assert!(result.contains("Context: focus on errors"));
+        assert!(result.contains("echo hello"));
+        assert!(result.contains("test output"));
     }
 
     #[test]
