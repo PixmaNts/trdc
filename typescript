@@ -1,0 +1,4 @@
+Script démarré sur 2026-04-05 12:31:05+02:00 [COMMAND="python3 -c 'import sys for i in range(5000):     print(f"service line {i} status active")" <pas exécuté sur le terminal>]
+zsh:3: unmatched '
+
+Script terminé sur 2026-04-05 12:31:05+02:00 [COMMAND_EXIT_CODE="1"]

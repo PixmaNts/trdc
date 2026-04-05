@@ -511,5 +511,5 @@ mod tests {
         let json = r#"{"choices":[{"delta":{}}]}"#;
         let resp: StreamResponse = serde_json::from_str(json).unwrap();
         assert!(resp.choices[0].delta.content.is_none());
-    }
-}
+     }
+ }
